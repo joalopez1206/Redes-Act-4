@@ -1,7 +1,10 @@
 import socket
 
-Headers = SYN, ACK, FIN, SEQ, DATOS = 'SYN', 'ACK', 'FIN', 'SEQ', 'DATOS'
+Headers = SYN, ACK, FIN, SEQ, DATA = 'SYN', 'ACK', 'FIN', 'SEQ', 'DATA'
 INB = '|||'
+LEN_SYN = 10
+
+LEN_HEADERS = 1 + 3 + 1 + 3 + 1 + 3 + 10 + 3  # numero magico
 
 
 class SocketTCP:
@@ -20,5 +23,12 @@ class SocketTCP:
     def create_segment(struct: dict):
         temp = []
         for k in Headers:
-            temp += [struct[k]]
+            if k == SEQ:
+                temp += [SocketTCP.add_len_zeros(struct[k])]
+            else:
+                temp += [struct[k]]
         return INB.join(temp)
+
+    @staticmethod
+    def add_len_zeros(seq_num: int, len_seq=LEN_SYN):
+        return f"{seq_num:0>{len_seq}}"
