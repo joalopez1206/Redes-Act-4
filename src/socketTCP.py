@@ -52,8 +52,11 @@ class SocketTCP:
         # Enviamos el mensaje
         logging.info(f"Sending syn message: {syn_msg}")
         self.socket.sendto(syn_msg, address)
+
         # Esperamos que llegue el mensaje
-        msg, _ = self.socket.recvfrom(LEN_HEADERS)
+        # y guardamos la direccion de destino
+        msg, dest_addr = self.socket.recvfrom(LEN_HEADERS)
+        self.dest_addr = dest_addr
 
         # Parseamos el mensaje que llegue con SYN + ACK
         logging.info("Message recv! expecting syn+ack")
@@ -68,7 +71,7 @@ class SocketTCP:
         logging.info("Sending message ACK")
         ack_msg = self.create_msg_w_seqnum(ack=1).encode()
         logging.info(f"{ack_msg}")
-        self.socket.sendto(ack_msg, address)
+        self.socket.sendto(ack_msg, dest_addr)
 
     def accept(self):
         # Recivo el mensaje de connect
@@ -78,9 +81,8 @@ class SocketTCP:
         msg_recv = SocketTCP.parse_segment(msg.decode())
         logging.info(f"{msg_recv}")
         # TODO: chequeo de errores! (ver si es un SYN)
-        self.seqnum = int(msg_recv[SEQ]) + 1
-
         new_sock = SocketTCP()
+        new_sock.seqnum = int(msg_recv[SEQ]) + 1
 
         # TODO: remover direccion hardcodeada 8003
         new_address = ('localhost', 8003)
@@ -89,20 +91,25 @@ class SocketTCP:
 
         # Enviamos ahora el syn+ack
         logging.info("Sending syn+ack msg")
-        syn_ack_msg = self.create_msg_w_seqnum(syn=1, ack=1)
+        syn_ack_msg = new_sock.create_msg_w_seqnum(syn=1, ack=1)
         logging.info(f"{syn_ack_msg}")
-        self.socket.sendto(syn_ack_msg.encode(), dest_addr)
+        new_sock.socket.sendto(syn_ack_msg.encode(), dest_addr)
 
         # Esperamos el ACK
-        msg, _ = self.socket.recvfrom(LEN_HEADERS)
+        msg, _ = new_sock.socket.recvfrom(LEN_HEADERS)
 
         logging.info("Message received!")
         msg_recv = SocketTCP.parse_segment(msg.decode())
         logging.info(f"{msg_recv}")
+
         # TODO: chequear errores! (ver si es ACK)
-        assert int(msg_recv[SEQ]) == (self.seqnum + 1)
+        assert int(msg_recv[SEQ]) == (new_sock.seqnum + 1)
 
-        self.seqnum += 1
-
-        new_sock.seqnum = self.seqnum
+        new_sock.seqnum += 1
         return new_sock, new_address
+
+    def send(self, message):
+        ...
+
+    def recv(self, buffsize):
+        ...
