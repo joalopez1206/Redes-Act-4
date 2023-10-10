@@ -108,8 +108,41 @@ class SocketTCP:
         new_sock.seqnum += 1
         return new_sock, new_address
 
-    def send(self, message):
-        ...
+    def send(self, message, buffsize=16):
+
+        # dividamos el mensaje en trozos de a lo mas 16 bytes
+        cursor = 0
+        len_msg = len(message)
+
+        # Primero mensaje es el largo del mensaje
+        datastr = f"{len_msg}"
+        msg2send = SocketTCP.create_msg_w_seqnum(data=datastr)
+
+        # lo enviamos
+        self.socket.sendto(msg2send, self.dest_addr)
+
+        # Luego tenemos que reecibir el ack
+        # y luego y actualizamos el numero de secuencia
+        msg, _ = self.socket.recvfrom(LEN_HEADERS+buffsize)
+
+        parsed_msg = SocketTCP.parse_segment(msg.decode())
+
+        # Vemos si efectivamente si se aumento el largo de el datastr
+        assert self.seqnum+len(datastr) == int(parsed_msg[SEQ])
+        self.seqnum += len(datastr)
+
+
+        while True:
+            ## Aqui creamos el primer mensaje del largo
+            len_of_msg_2_send = min(buffsize, len_msg - cursor)
+
+            msg2send = message[cursor: cursor + len_of_msg_2_send]
+            assert len_of_msg_2_send == len(msg2send), f"{len_of_msg_2_send} vs {len(msg2send)}"
+            data_w_h = {SYN: '0', ACK: '0', FIN: '0', SEQ: '50', DATA: msg2send}
+            self.socket.sendto(SocketTCP.create_segment(data_w_h).encode(), addr)
+            cursor += len_of_msg_2_send
+            if cursor >= len_msg:
+                break
 
     def recv(self, buffsize):
         ...
