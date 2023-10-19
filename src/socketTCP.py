@@ -1,6 +1,7 @@
 import socket
 import logging
 
+BUFFER_SIZE = 16
 Headers = SYN, ACK, FIN, SEQ, DATA = 'SYN', 'ACK', 'FIN', 'SEQ', 'DATA'
 INB = '|||'
 LEN_SYN = 10
@@ -12,9 +13,11 @@ logging.basicConfig(level=logging.INFO)
 class SocketTCP:
     def __init__(self):
         self.socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.dest_addr: tuple[str, int] = None
-        self.origen_addr: tuple[str, int] = None
+        self.dest_addr: tuple[str, int] | None = None
+        self.origen_addr: tuple[str, int] | None = None
         self.seqnum = 20
+        self.mesg_recv_so_far = 0
+        self.cache = None
 
     @staticmethod
     def parse_segment(segmento: str):
@@ -75,7 +78,7 @@ class SocketTCP:
 
     def accept(self):
         # Recivo el mensaje de connect
-        logging.info("Waiting for syn message")
+        logging.info("Starting the threeway handshake serverside!")
         msg, dest_addr = self.socket.recvfrom(LEN_HEADERS)
 
         msg_recv = SocketTCP.parse_segment(msg.decode())
@@ -106,9 +109,11 @@ class SocketTCP:
         assert int(msg_recv[SEQ]) == (new_sock.seqnum + 1)
 
         new_sock.seqnum += 1
+
+        logging.info("Threeway handshake done!")
         return new_sock, new_address
 
-    def send(self, message, buffsize=16):
+    def send(self, message: bytes, buffsize=BUFFER_SIZE):
 
         # dividamos el mensaje en trozos de a lo mas 16 bytes
         cursor = 0
@@ -116,33 +121,92 @@ class SocketTCP:
 
         # Primero mensaje es el largo del mensaje
         datastr = f"{len_msg}"
-        msg2send = SocketTCP.create_msg_w_seqnum(data=datastr)
+        msg2send = self.create_msg_w_seqnum(data=datastr).encode()
 
-        # lo enviamos
-        self.socket.sendto(msg2send, self.dest_addr)
-
-        # Luego tenemos que reecibir el ack
-        # y luego y actualizamos el numero de secuencia
-        msg, _ = self.socket.recvfrom(LEN_HEADERS+buffsize)
-
-        parsed_msg = SocketTCP.parse_segment(msg.decode())
+        # lo enviamos con stop and wait
+        received = False
+        parsed_msg: dict | None = None
+        while not received:
+            try:
+                self.socket.sendto(msg2send, self.dest_addr)
+                # Luego tenemos que re-escribir el ack
+                # y luego y actualizamos el numero de secuencia
+                self.socket.settimeout(5.0)
+                msg, _ = self.socket.recvfrom(LEN_HEADERS + buffsize)
+                parsed_msg = SocketTCP.parse_segment(msg.decode())
+                received = True
+            except TimeoutError:
+                logging.info("Fallo enviar el largo del mensaje, trying denuevo")
 
         # Vemos si efectivamente si se aumento el largo de el datastr
-        assert self.seqnum+len(datastr) == int(parsed_msg[SEQ])
+        assert self.seqnum + len(datastr) == int(parsed_msg[SEQ]) and parsed_msg[ACK] == "1"
         self.seqnum += len(datastr)
 
-
         while True:
-            ## Aqui creamos el primer mensaje del largo
+            # Aqui creamos el primer mensaje del largo
             len_of_msg_2_send = min(buffsize, len_msg - cursor)
 
             msg2send = message[cursor: cursor + len_of_msg_2_send]
             assert len_of_msg_2_send == len(msg2send), f"{len_of_msg_2_send} vs {len(msg2send)}"
-            data_w_h = {SYN: '0', ACK: '0', FIN: '0', SEQ: '50', DATA: msg2send}
-            self.socket.sendto(SocketTCP.create_segment(data_w_h).encode(), addr)
+            message_w_h = self.create_msg_w_seqnum(data=msg2send.decode()).encode()
+
+            received = False
+            # Stop and wait
+            while not received:
+                try:
+                    logging.info(message_w_h)
+                    self.socket.sendto(message_w_h, self.dest_addr)
+                    self.socket.settimeout(5.0)
+                    msg, _ = self.socket.recvfrom(LEN_HEADERS + BUFFER_SIZE)
+                    # TODO: CHECK IF ITS A ACK and if is the correct number sequence
+                    received = True
+                except TimeoutError:
+                    logging.info("Time out! trying again")
+
             cursor += len_of_msg_2_send
             if cursor >= len_msg:
                 break
 
-    def recv(self, buffsize):
-        ...
+    def recv(self, buffsize: int):
+        logging.info("\n\n")
+        logging.info(f"el buffer a usar es: {buffsize}")
+        original_buffsize = buffsize
+        # recibimos el primer segmento
+        if self.mesg_recv_so_far == 0:
+            msg, _ = self.socket.recvfrom(LEN_HEADERS + BUFFER_SIZE)
+            parsed_msg = SocketTCP.parse_segment(msg.decode())
+            largo = len(parsed_msg[DATA])
+            self.mesg_recv_so_far = int(parsed_msg[DATA])
+            logging.info(f"el largo es {largo}")
+            # y enviamos el ack con el nuevo seqnum
+            self.seqnum += largo
+            msg = self.create_msg_w_seqnum(ack=1).encode()
+            self.socket.sendto(msg, self.dest_addr)
+            logging.info("Enviando el ACK")
+        # aquí suponemos que es > 0 y, por lo tanto, basta con ver donde estamos
+        logging.info("Estamos antes del cache")
+        i = 0
+        data = ""
+        if self.cache is not None:
+            logging.info(f"Si tenia cache! el cache es : {self.cache}")
+            data = self.cache + data
+            buffsize -= len(self.cache)
+            self.cache = None
+        while i * BUFFER_SIZE < buffsize:
+            msg, _ = self.socket.recvfrom(LEN_HEADERS + BUFFER_SIZE)
+            logging.info(msg)
+            parsed_msg = SocketTCP.parse_segment(msg.decode())
+            data2add = parsed_msg[DATA]
+
+            data += data2add
+            logging.info(data)
+            i += 1
+            self.mesg_recv_so_far -= len(data2add)
+            response = self.create_msg_w_seqnum(ack=1).encode()
+            self.socket.sendto(response, self.dest_addr)
+
+        if len(data) > original_buffsize:
+            self.cache = data[original_buffsize:]
+            data = data[:original_buffsize]
+        logging.info(f"mensaje con buffsize = {data}")
+        return data.encode()

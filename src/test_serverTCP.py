@@ -1,7 +1,9 @@
 # SERVER
-from socketTCP import SocketTCP
-from utilsUDP import SV_ADDR
+import logging
 
+from socketTCP import SocketTCP
+
+SV_ADDR = ("localhost", 8000)
 server_socketTCP = SocketTCP()
 server_socketTCP.bind(SV_ADDR)
 connection_socketTCP, new_address = server_socketTCP.accept()
@@ -23,7 +25,9 @@ else: print("Test 2: Failed")
 # test 3
 buff_size = 14
 message_part_1 = connection_socketTCP.recv(buff_size)
+logging.info(f"desde el test server {message_part_1}")
 message_part_2 = connection_socketTCP.recv(buff_size)
+logging.info(f"desde el test server {message_part_2}")
 print("Test 3 received:", message_part_1 + message_part_2)
 if (message_part_1 + message_part_2) == "Mensaje de largo 19".encode(): print("Test 3: Passed")
 else: print("Test 3: Failed")
