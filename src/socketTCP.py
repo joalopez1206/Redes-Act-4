@@ -50,6 +50,7 @@ class SocketTCP:
         return SocketTCP.create_msg(syn=syn, ack=ack, fin=fin, seq=self.seqnum, data=data)
 
     def connect(self, address):
+        logging.info("-----------------------")
         logging.info("Starting three way handshake client side")
         syn_msg = self.create_msg_w_seqnum(syn=1).encode()
         # Enviamos el mensaje
@@ -75,9 +76,11 @@ class SocketTCP:
         ack_msg = self.create_msg_w_seqnum(ack=1).encode()
         logging.info(f"{ack_msg}")
         self.socket.sendto(ack_msg, dest_addr)
+        logging.info("-----------------------")
 
     def accept(self):
         # Recivo el mensaje de connect
+        logging.info("-----------------------")
         logging.info("Starting the threeway handshake serverside!")
         msg, dest_addr = self.socket.recvfrom(LEN_HEADERS)
 
@@ -111,10 +114,12 @@ class SocketTCP:
         new_sock.seqnum += 1
 
         logging.info("Threeway handshake done!")
+        logging.info("-----------------------")
         return new_sock, new_address
 
     def send(self, message: bytes, buffsize=BUFFER_SIZE):
-
+        logging.info("-----------------------")
+        logging.info("Sending the message")
         # dividamos el mensaje en trozos de a lo mas 16 bytes
         cursor = 0
         len_msg = len(message)
@@ -166,9 +171,12 @@ class SocketTCP:
             cursor += len_of_msg_2_send
             if cursor >= len_msg:
                 break
+        logging.info("Ending send")
+        logging.info("-----------------------")
 
     def recv(self, buffsize: int):
-        logging.info("\n\n")
+        logging.info("-----------------------")
+        logging.info("Starting recv")
         logging.info(f"el buffer a usar es: {buffsize}")
         original_buffsize = buffsize
         # recibimos el primer segmento
@@ -209,4 +217,48 @@ class SocketTCP:
             self.cache = data[original_buffsize:]
             data = data[:original_buffsize]
         logging.info(f"mensaje con buffsize = {data}")
+        logging.info("-----------------------")
         return data.encode()
+
+    def close(self):
+        self.socket.settimeout(20)
+        logging.info("-----------------------")
+        logging.info("Starting close function")
+        end_of_comm_msg = self.create_msg_w_seqnum(fin=1).encode()
+
+        logging.info(f"sending the end of comm function (fin = 1 ){self.dest_addr}")
+        self.socket.sendto(end_of_comm_msg, self.dest_addr)
+
+        msg, _ = self.socket.recvfrom(LEN_HEADERS)
+        parsed_msg = SocketTCP.parse_segment(msg.decode())
+
+        assert int(parsed_msg[FIN]) == 1 and int(parsed_msg[ACK]) == 1 and (self.seqnum + 1) == int(parsed_msg[SEQ])
+
+        logging.info("Recv fin+ack")
+        self.seqnum += 2
+        ack_msg = self.create_msg_w_seqnum(ack=1).encode()
+
+        self.socket.sendto(ack_msg, self.dest_addr)
+        logging.info("sending ack and ending")
+        logging.info("-----------------------")
+        return
+
+    def recv_close(self):
+        logging.info("-----------------------")
+        logging.info("Starting recv close ")
+        end_of_comm_msg, _ = self.socket.recvfrom(LEN_HEADERS)
+        parsed_msg = SocketTCP.parse_segment(end_of_comm_msg.decode())
+
+        assert int(parsed_msg[FIN]) == 1 and (self.seqnum + 1) == int(parsed_msg[SEQ])
+        self.seqnum += 1
+        ack_plus_fin_msg = self.create_msg_w_seqnum(fin=1, ack=1).encode()
+
+        self.socket.sendto(ack_plus_fin_msg, self.dest_addr)
+
+        msg, _ = self.socket.recvfrom(LEN_HEADERS)
+        parsed_msg = SocketTCP.parse_segment(msg.decode())
+
+        assert int(parsed_msg[ACK]) == 1 and (self.seqnum + 1) == int(parsed_msg[SEQ])
+        logging.info("Ending recv close!")
+        logging.info("-----------------------")
+
