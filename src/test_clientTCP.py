@@ -15,5 +15,5 @@ client_socketTCP.send(message)
 message = "Mensaje de largo 19".encode()
 client_socketTCP.send(message)
 
-time.sleep(2.0)
+#time.sleep(2.0)
 client_socketTCP.close()

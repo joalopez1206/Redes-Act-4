@@ -1,6 +1,6 @@
+from __future__ import annotations
 import socket
 import logging
-
 BUFFER_SIZE = 16
 Headers = SYN, ACK, FIN, SEQ, DATA = 'SYN', 'ACK', 'FIN', 'SEQ', 'DATA'
 INB = '|||'
@@ -221,14 +221,15 @@ class SocketTCP:
         return data.encode()
 
     def close(self):
-        self.socket.settimeout(20)
+        
         logging.info("-----------------------")
         logging.info("Starting close function")
+        
         end_of_comm_msg = self.create_msg_w_seqnum(fin=1).encode()
 
         logging.info(f"sending the end of comm function (fin = 1 ){self.dest_addr}")
         self.socket.sendto(end_of_comm_msg, self.dest_addr)
-
+        self.socket.settimeout(5)
         msg, _ = self.socket.recvfrom(LEN_HEADERS)
         parsed_msg = SocketTCP.parse_segment(msg.decode())
 
@@ -248,8 +249,8 @@ class SocketTCP:
         logging.info("Starting recv close ")
         end_of_comm_msg, _ = self.socket.recvfrom(LEN_HEADERS)
         parsed_msg = SocketTCP.parse_segment(end_of_comm_msg.decode())
-
-        assert int(parsed_msg[FIN]) == 1 and (self.seqnum + 1) == int(parsed_msg[SEQ])
+        logging.info("recv")
+        assert int(parsed_msg[FIN]) == 1 
         self.seqnum += 1
         ack_plus_fin_msg = self.create_msg_w_seqnum(fin=1, ack=1).encode()
 

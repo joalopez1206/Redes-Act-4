@@ -38,4 +38,4 @@ if (message_part_1 + message_part_2) == "Mensaje de largo 19".encode():
 else:
     print("Test 3: Failed")
 
-server_socketTCP.recv_close()
+connection_socketTCP.recv_close()
