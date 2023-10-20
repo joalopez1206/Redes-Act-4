@@ -7,6 +7,8 @@ INB = '|||'
 LEN_SYN = 10
 
 LEN_HEADERS = 1 + 3 + 1 + 3 + 1 + 3 + 10 + 3  # numero magico
+
+TOTAL_LEN = LEN_HEADERS + BUFFER_SIZE
 logging.basicConfig(level=logging.INFO)
 
 
@@ -53,22 +55,20 @@ class SocketTCP:
         logging.info("-----------------------")
         logging.info("Starting three way handshake client side")
         syn_msg = self.create_msg_w_seqnum(syn=1).encode()
-        # Enviamos el mensaje
-        logging.info(f"Sending syn message: {syn_msg}")
-
-        self.socket.sendto(syn_msg, address)
-
+        # Enviamos el mensaje y
         # Esperamos que llegue el mensaje
         # y guardamos la direccion de destino
         recv = False
         msg : bytes | None = None
         while not recv:
             try:
+                logging.info(f"Sending syn message: {syn_msg}")
+                self.socket.sendto(syn_msg, address)
                 self.socket.settimeout(5.0)
-                msg, dest_addr = self.socket.recvfrom(LEN_HEADERS)
+                msg, dest_addr = self.socket.recvfrom(TOTAL_LEN)
                 recv = True
                 self.dest_addr = dest_addr
-            except TimeoutError:
+            except socket.error:
                 logging.info("Time out! trying again")
 
         # Parseamos el mensaje que llegue con SYN + ACK
@@ -97,15 +97,8 @@ class SocketTCP:
         msg : bytes | None = None
         dest_addr = None
 
-        #Stop and wait
-        while not recv:
-            try:
-                self.socket.settimeout(5)
-                msg, dest_addr = self.socket.recvfrom(LEN_HEADERS)
-                recv = True
-            except TimeoutError:
-                logging.info("Time out! trying again")
-        
+        msg, dest_addr = self.socket.recvfrom(TOTAL_LEN)
+
         #En este punnto ya llego el mensaje
         msg_recv = SocketTCP.parse_segment(msg.decode())
         assert int(msg_recv[SYN]) == 1 
@@ -124,22 +117,25 @@ class SocketTCP:
         # Enviamos ahora el syn+ack
         logging.info("Sending syn+ack msg")
         syn_ack_msg = new_sock.create_msg_w_seqnum(syn=1, ack=1)
-        logging.info(f"Enviando el syn+ack{syn_ack_msg}")
-
-        new_sock.socket.sendto(syn_ack_msg.encode(), dest_addr)
 
         # Esperamos el ACK (STOP AND WAIT)
         recv = False
         msg = None
         # Aqui agregamos el caso extra donde si se pierde el ultimo ACK, 
         # y recibe algo con datos entonces eso cuenta como un ACK 
+
         while not recv:
             try:
-                msg, _ = new_sock.socket.recvfrom(LEN_HEADERS)
+                new_sock.socket.sendto(syn_ack_msg.encode(), dest_addr)
+                logging.info(f"Enviando el syn+ack: {syn_ack_msg}")
+                new_sock.socket.settimeout(5)
+                logging.info(f"Esperando el ack")
+                msg, _ = new_sock.socket.recvfrom(TOTAL_LEN)
                 msg_recv = SocketTCP.parse_segment(msg.decode())
+                logging.info(msg)
                 if int(msg_recv[ACK]) == 1 or len(msg_recv[DATA]) > 0:
                     recv = True
-            except TimeoutError:
+            except socket.error:
                 logging.info("Time out! trying again")
         
         assert int(msg_recv[SEQ]) == (new_sock.seqnum + 1)
@@ -149,7 +145,7 @@ class SocketTCP:
         logging.info("-----------------------")
         return new_sock, new_address
 
-    def send(self, message: bytes, buffsize=BUFFER_SIZE):
+    def send(self, message: bytes):
         logging.info("-----------------------")
         logging.info("Sending the message")
         # dividamos el mensaje en trozos de a lo mas 16 bytes
@@ -158,6 +154,7 @@ class SocketTCP:
 
         # Primero mensaje es el largo del mensaje
         datastr = f"{len_msg}"
+
         msg2send = self.create_msg_w_seqnum(data=datastr).encode()
 
         # lo enviamos con stop and wait
@@ -169,19 +166,22 @@ class SocketTCP:
                 # Luego tenemos que re-escribir el ack
                 # y luego y actualizamos el numero de secuencia
                 self.socket.settimeout(5.0)
-                msg, _ = self.socket.recvfrom(LEN_HEADERS + buffsize)
+                msg, _ = self.socket.recvfrom(TOTAL_LEN)
                 parsed_msg = SocketTCP.parse_segment(msg.decode())
+                ## si envia que esta antes, entonces le enviamos el mismo segmento!
+                if (self.seqnum + len(datastr) > int(parsed_msg[SEQ])):
+                    continue
                 received = True
-            except TimeoutError:
+            except socket.error:
                 logging.info("Fallo enviar el largo del mensaje, trying denuevo")
 
         # Vemos si efectivamente si se aumento el largo de el datastr
-        assert self.seqnum + len(datastr) == int(parsed_msg[SEQ]) and parsed_msg[ACK] == "1"
+        assert self.seqnum + len(datastr) == int(parsed_msg[SEQ]) and parsed_msg[ACK] == "1", f"{self.seqnum + len(datastr)} != {int(parsed_msg[SEQ])} or {parsed_msg[ACK]} != 1"
         self.seqnum += len(datastr)
 
         while True:
             # Aqui creamos el primer mensaje del largo
-            len_of_msg_2_send = min(buffsize, len_msg - cursor)
+            len_of_msg_2_send = min(BUFFER_SIZE, len_msg - cursor)
 
             msg2send = message[cursor: cursor + len_of_msg_2_send]
             assert len_of_msg_2_send == len(msg2send), f"{len_of_msg_2_send} vs {len(msg2send)}"
@@ -194,12 +194,15 @@ class SocketTCP:
                     logging.info(message_w_h)
                     self.socket.sendto(message_w_h, self.dest_addr)
                     self.socket.settimeout(5.0)
-                    msg, _ = self.socket.recvfrom(LEN_HEADERS + BUFFER_SIZE)
-                    # TODO: CHECK IF ITS A ACK and if is the correct number sequence
+                    msg, _ = self.socket.recvfrom(TOTAL_LEN)
+                    parsed_msg = SocketTCP.parse_segment(msg.decode())
+                    if (self.seqnum + len_of_msg_2_send < int(parsed_msg[SEQ])) or int(parsed_msg[ACK]) != 1:
+                        continue
                     received = True
-                except TimeoutError:
+                    assert int(parsed_msg[SEQ]) == (self.seqnum + len_of_msg_2_send), f"{int(parsed_msg[SEQ])} != {(self.seqnum + len_of_msg_2_send)}"
+                except socket.error:
                     logging.info("Time out! trying again")
-
+            self.seqnum += len_of_msg_2_send
             cursor += len_of_msg_2_send
             if cursor >= len_msg:
                 break
@@ -213,11 +216,17 @@ class SocketTCP:
         original_buffsize = buffsize
         # recibimos el primer segmento
         if self.mesg_recv_so_far == 0:
-            msg, _ = self.socket.recvfrom(LEN_HEADERS + BUFFER_SIZE)
+            msg, _ = self.socket.recvfrom(TOTAL_LEN)
             parsed_msg = SocketTCP.parse_segment(msg.decode())
+
+            #Si el mensaje ya lo vimos, entonces solo enviamos ack con nuestro numero actual
+            if int(parsed_msg[SEQ])< self.seqnum:
+                response = self.create_msg_w_seqnum(ack=1).encode()
+                self.socket.sendto(response, self.dest_addr)
+            
             largo = len(parsed_msg[DATA])
             self.mesg_recv_so_far = int(parsed_msg[DATA])
-            logging.info(f"el largo es {largo}")
+            logging.info(f"el largo del mensaje es {parsed_msg[DATA]}")
             # y enviamos el ack con el nuevo seqnum
             self.seqnum += largo
             msg = self.create_msg_w_seqnum(ack=1).encode()
@@ -233,22 +242,29 @@ class SocketTCP:
             buffsize -= len(self.cache)
             self.cache = None
         while i * BUFFER_SIZE < buffsize:
-            msg, _ = self.socket.recvfrom(LEN_HEADERS + BUFFER_SIZE)
+            self.socket.setblocking(True)
+            msg, _ = self.socket.recvfrom(TOTAL_LEN)
             logging.info(msg)
             parsed_msg = SocketTCP.parse_segment(msg.decode())
             data2add = parsed_msg[DATA]
+
+            if int(parsed_msg[SEQ])< self.seqnum:
+                response = self.create_msg_w_seqnum(ack=1).encode()
+                self.socket.sendto(response, self.dest_addr)
+                continue
 
             data += data2add
             logging.info(data)
             i += 1
             self.mesg_recv_so_far -= len(data2add)
+            self.seqnum += len(data2add)
             response = self.create_msg_w_seqnum(ack=1).encode()
             self.socket.sendto(response, self.dest_addr)
 
         if len(data) > original_buffsize:
             self.cache = data[original_buffsize:]
             data = data[:original_buffsize]
-        logging.info(f"mensaje con buffsize = {data}")
+        logging.info(f"mensaje con buffsize {original_buffsize} = {data}")
         logging.info("-----------------------")
         return data.encode()
 
@@ -260,38 +276,62 @@ class SocketTCP:
         end_of_comm_msg = self.create_msg_w_seqnum(fin=1).encode()
 
         logging.info(f"sending the end of comm function (fin = 1 ){self.dest_addr}")
-        self.socket.sendto(end_of_comm_msg, self.dest_addr)
-        self.socket.settimeout(5)
-        msg, _ = self.socket.recvfrom(LEN_HEADERS)
-        parsed_msg = SocketTCP.parse_segment(msg.decode())
-
-        assert int(parsed_msg[FIN]) == 1 and int(parsed_msg[ACK]) == 1 and (self.seqnum + 1) == int(parsed_msg[SEQ])
-
-        logging.info("Recv fin+ack")
-        self.seqnum += 2
-        ack_msg = self.create_msg_w_seqnum(ack=1).encode()
-
-        self.socket.sendto(ack_msg, self.dest_addr)
-        logging.info("sending ack and ending")
+        i = 0
+        msg : bytes| None = None
+        while i < 3:
+            try:
+                self.socket.sendto(end_of_comm_msg, self.dest_addr)
+                self.socket.settimeout(5)
+                msg, _ = self.socket.recvfrom(TOTAL_LEN)
+                break
+            except socket.error:
+                logging.info(f"Error closing, trying {i+1}/3")
+                i+=1
+        
+        
+        if i < 3:
+            parsed_msg = SocketTCP.parse_segment(msg.decode())
+            assert int(parsed_msg[FIN]) == 1 and int(parsed_msg[ACK]) == 1 and (self.seqnum + 1) == int(parsed_msg[SEQ])
+            logging.info("Recv fin+ack")
+            self.seqnum += 2
+            ack_msg = self.create_msg_w_seqnum(ack=1).encode()
+            for _ in range(3):
+                self.socket.sendto(ack_msg, self.dest_addr)
+                logging.info("sending ack and ending")
+        
+        else:
+            logging.info("3 tries, stoping connection!")
         logging.info("-----------------------")
         return
 
     def recv_close(self):
         logging.info("-----------------------")
         logging.info("Starting recv close ")
-        end_of_comm_msg, _ = self.socket.recvfrom(LEN_HEADERS)
+
+        end_of_comm_msg, _ = self.socket.recvfrom(TOTAL_LEN)
         parsed_msg = SocketTCP.parse_segment(end_of_comm_msg.decode())
         logging.info("recv")
         assert int(parsed_msg[FIN]) == 1 
         self.seqnum += 1
         ack_plus_fin_msg = self.create_msg_w_seqnum(fin=1, ack=1).encode()
 
-        self.socket.sendto(ack_plus_fin_msg, self.dest_addr)
-
-        msg, _ = self.socket.recvfrom(LEN_HEADERS)
-        parsed_msg = SocketTCP.parse_segment(msg.decode())
-
-        assert int(parsed_msg[ACK]) == 1 and (self.seqnum + 1) == int(parsed_msg[SEQ])
+        
+        i = 0
+        msg = None
+        parsed_msg = None
+        while i<3:
+            try:
+                self.socket.sendto(ack_plus_fin_msg, self.dest_addr)
+                self.socket.settimeout(5)
+                msg, _ = self.socket.recvfrom(TOTAL_LEN)
+                parsed_msg = SocketTCP.parse_segment(msg.decode())
+                break
+            except socket.error:
+                i+=1
+                logging.info("ACK not received, trying again!")
+        
+        if i == 3:
+            logging.info("ACK not recv, closing conn")
         logging.info("Ending recv close!")
         logging.info("-----------------------")
 
