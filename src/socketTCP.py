@@ -55,19 +55,28 @@ class SocketTCP:
         syn_msg = self.create_msg_w_seqnum(syn=1).encode()
         # Enviamos el mensaje
         logging.info(f"Sending syn message: {syn_msg}")
+
         self.socket.sendto(syn_msg, address)
 
         # Esperamos que llegue el mensaje
         # y guardamos la direccion de destino
-        msg, dest_addr = self.socket.recvfrom(LEN_HEADERS)
-        self.dest_addr = dest_addr
+        recv = False
+        msg : bytes | None = None
+        while not recv:
+            try:
+                self.socket.settimeout(5.0)
+                msg, dest_addr = self.socket.recvfrom(LEN_HEADERS)
+                recv = True
+                self.dest_addr = dest_addr
+            except TimeoutError:
+                logging.info("Time out! trying again")
 
         # Parseamos el mensaje que llegue con SYN + ACK
         logging.info("Message recv! expecting syn+ack")
         msg_recv = SocketTCP.parse_segment(msg.decode())
         logging.info(f"{msg_recv}")
         # TODO: Chequeo de errores! (ver si es un SYN+ACK)
-        assert (self.seqnum + 1) == int(msg_recv[SEQ])
+        assert int(msg_recv[ACK]) == 1 and int(msg_recv[SYN]) == 1  and (self.seqnum + 1) == int(msg_recv[SEQ])
 
         # Aumentamos el seqnum en 2 y enviamos el ack!
         self.seqnum += 2
@@ -82,35 +91,58 @@ class SocketTCP:
         # Recivo el mensaje de connect
         logging.info("-----------------------")
         logging.info("Starting the threeway handshake serverside!")
-        msg, dest_addr = self.socket.recvfrom(LEN_HEADERS)
 
+        # Seteo de variables para usar despues!
+        recv = False
+        msg : bytes | None = None
+        dest_addr = None
+
+        #Stop and wait
+        while not recv:
+            try:
+                self.socket.settimeout(5)
+                msg, dest_addr = self.socket.recvfrom(LEN_HEADERS)
+                recv = True
+            except TimeoutError:
+                logging.info("Time out! trying again")
+        
+        #En este punnto ya llego el mensaje
         msg_recv = SocketTCP.parse_segment(msg.decode())
-        logging.info(f"{msg_recv}")
-        # TODO: chequeo de errores! (ver si es un SYN)
+        assert int(msg_recv[SYN]) == 1 
+
+        # Creamos el nuevo socket
         new_sock = SocketTCP()
         new_sock.seqnum = int(msg_recv[SEQ]) + 1
 
-        # TODO: remover direccion hardcodeada 8003
+        # TODO: remover direccion hardcodeada 8003 ???
         new_address = ('localhost', 8003)
+
+        # Y asociamos la direccion de origen y destino al nuevo socket
         new_sock.origen_addr = new_address
         new_sock.dest_addr = dest_addr
 
         # Enviamos ahora el syn+ack
         logging.info("Sending syn+ack msg")
         syn_ack_msg = new_sock.create_msg_w_seqnum(syn=1, ack=1)
-        logging.info(f"{syn_ack_msg}")
+        logging.info(f"Enviando el syn+ack{syn_ack_msg}")
+
         new_sock.socket.sendto(syn_ack_msg.encode(), dest_addr)
 
-        # Esperamos el ACK
-        msg, _ = new_sock.socket.recvfrom(LEN_HEADERS)
-
-        logging.info("Message received!")
-        msg_recv = SocketTCP.parse_segment(msg.decode())
-        logging.info(f"{msg_recv}")
-
-        # TODO: chequear errores! (ver si es ACK)
+        # Esperamos el ACK (STOP AND WAIT)
+        recv = False
+        msg = None
+        # Aqui agregamos el caso extra donde si se pierde el ultimo ACK, 
+        # y recibe algo con datos entonces eso cuenta como un ACK 
+        while not recv:
+            try:
+                msg, _ = new_sock.socket.recvfrom(LEN_HEADERS)
+                msg_recv = SocketTCP.parse_segment(msg.decode())
+                if int(msg_recv[ACK]) == 1 or len(msg_recv[DATA]) > 0:
+                    recv = True
+            except TimeoutError:
+                logging.info("Time out! trying again")
+        
         assert int(msg_recv[SEQ]) == (new_sock.seqnum + 1)
-
         new_sock.seqnum += 1
 
         logging.info("Threeway handshake done!")
