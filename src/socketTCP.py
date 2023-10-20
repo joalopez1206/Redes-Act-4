@@ -9,7 +9,7 @@ LEN_SYN = 10
 LEN_HEADERS = 1 + 3 + 1 + 3 + 1 + 3 + 10 + 3  # numero magico
 
 TOTAL_LEN = LEN_HEADERS + BUFFER_SIZE
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(format="%(levelname)s -> %(message)s", level=logging.INFO)
 
 
 class SocketTCP:
@@ -64,7 +64,7 @@ class SocketTCP:
             try:
                 logging.info(f"Sending syn message: {syn_msg}")
                 self.socket.sendto(syn_msg, address)
-                self.socket.settimeout(5.0)
+                self.socket.settimeout(5)
                 msg, dest_addr = self.socket.recvfrom(TOTAL_LEN)
                 recv = True
                 self.dest_addr = dest_addr
@@ -85,7 +85,7 @@ class SocketTCP:
         ack_msg = self.create_msg_w_seqnum(ack=1).encode()
         logging.info(f"{ack_msg}")
         self.socket.sendto(ack_msg, dest_addr)
-        logging.info("-----------------------")
+        logging.info("-----------------------\n")
 
     def accept(self):
         # Recivo el mensaje de connect
@@ -132,7 +132,7 @@ class SocketTCP:
                 logging.info(f"Esperando el ack")
                 msg, _ = new_sock.socket.recvfrom(TOTAL_LEN)
                 msg_recv = SocketTCP.parse_segment(msg.decode())
-                logging.info(msg)
+                logging.info(f"Mensaje recibido {msg.decode()}")
                 if int(msg_recv[ACK]) == 1 or len(msg_recv[DATA]) > 0:
                     recv = True
             except socket.error:
@@ -142,7 +142,7 @@ class SocketTCP:
         new_sock.seqnum += 1
 
         logging.info("Threeway handshake done!")
-        logging.info("-----------------------")
+        logging.info("-----------------------\n")
         return new_sock, new_address
 
     def send(self, message: bytes):
@@ -168,9 +168,8 @@ class SocketTCP:
                 self.socket.settimeout(5.0)
                 msg, _ = self.socket.recvfrom(TOTAL_LEN)
                 parsed_msg = SocketTCP.parse_segment(msg.decode())
-                ## si envia que esta antes, entonces le enviamos el mismo segmento!
-                if (self.seqnum + len(datastr) > int(parsed_msg[SEQ])):
-                    continue
+                #if int(parsed_msg[ACK]) != "1" or (self.seqnum + len(datastr)) != int(parsed_msg[SEQ]):
+                #    continue
                 received = True
             except socket.error:
                 logging.info("Fallo enviar el largo del mensaje, trying denuevo")
@@ -191,12 +190,12 @@ class SocketTCP:
             # Stop and wait
             while not received:
                 try:
-                    logging.info(message_w_h)
+                    logging.info(f"Mensaje a enviar {message_w_h}")
                     self.socket.sendto(message_w_h, self.dest_addr)
                     self.socket.settimeout(5.0)
                     msg, _ = self.socket.recvfrom(TOTAL_LEN)
                     parsed_msg = SocketTCP.parse_segment(msg.decode())
-                    if (self.seqnum + len_of_msg_2_send < int(parsed_msg[SEQ])) or int(parsed_msg[ACK]) != 1:
+                    if (self.seqnum + len_of_msg_2_send < int(parsed_msg[SEQ])):
                         continue
                     received = True
                     assert int(parsed_msg[SEQ]) == (self.seqnum + len_of_msg_2_send), f"{int(parsed_msg[SEQ])} != {(self.seqnum + len_of_msg_2_send)}"
@@ -207,7 +206,7 @@ class SocketTCP:
             if cursor >= len_msg:
                 break
         logging.info("Ending send")
-        logging.info("-----------------------")
+        logging.info("-----------------------\n")
 
     def recv(self, buffsize: int):
         logging.info("-----------------------")
@@ -215,25 +214,28 @@ class SocketTCP:
         logging.info(f"el buffer a usar es: {buffsize}")
         original_buffsize = buffsize
         # recibimos el primer segmento
-        if self.mesg_recv_so_far == 0:
+        while self.mesg_recv_so_far == 0:
+            self.socket.setblocking(True)
             msg, _ = self.socket.recvfrom(TOTAL_LEN)
             parsed_msg = SocketTCP.parse_segment(msg.decode())
 
             #Si el mensaje ya lo vimos, entonces solo enviamos ack con nuestro numero actual
-            if int(parsed_msg[SEQ])< self.seqnum:
+            logging.info(f"Mensaje recv! {msg} y el seqnum actual es {self.seqnum}")
+            if int(parsed_msg[SEQ]) < self.seqnum:
+                logging.info("Segmento duplicado! respondiendo ack")
                 response = self.create_msg_w_seqnum(ack=1).encode()
                 self.socket.sendto(response, self.dest_addr)
             
-            largo = len(parsed_msg[DATA])
-            self.mesg_recv_so_far = int(parsed_msg[DATA])
-            logging.info(f"el largo del mensaje es {parsed_msg[DATA]}")
-            # y enviamos el ack con el nuevo seqnum
-            self.seqnum += largo
-            msg = self.create_msg_w_seqnum(ack=1).encode()
-            self.socket.sendto(msg, self.dest_addr)
-            logging.info("Enviando el ACK")
+            else :
+                largo = len(parsed_msg[DATA])
+                self.mesg_recv_so_far = int(parsed_msg[DATA])
+                logging.info(f"el largo del mensaje es {parsed_msg[DATA]}")
+                # y enviamos el ack con el nuevo seqnum
+                self.seqnum += largo
+                msg = self.create_msg_w_seqnum(ack=1).encode()
+                self.socket.sendto(msg, self.dest_addr)
+                logging.info("Enviando el ACK")
         # aquí suponemos que es > 0 y, por lo tanto, basta con ver donde estamos
-        logging.info("Estamos antes del cache")
         i = 0
         data = ""
         if self.cache is not None:
@@ -244,28 +246,29 @@ class SocketTCP:
         while i * BUFFER_SIZE < buffsize:
             self.socket.setblocking(True)
             msg, _ = self.socket.recvfrom(TOTAL_LEN)
-            logging.info(msg)
+            logging.info(f"Mensaje recv!: {msg}")
             parsed_msg = SocketTCP.parse_segment(msg.decode())
             data2add = parsed_msg[DATA]
-
-            if int(parsed_msg[SEQ])< self.seqnum:
+            
+            if int(parsed_msg[SEQ]) < self.seqnum:
+                logging.info(f"Segmento duplicado! seqnumrecv = {int(parsed_msg[SEQ])} vs {self.seqnum} respondiendo ack")
                 response = self.create_msg_w_seqnum(ack=1).encode()
                 self.socket.sendto(response, self.dest_addr)
                 continue
-
-            data += data2add
-            logging.info(data)
-            i += 1
-            self.mesg_recv_so_far -= len(data2add)
-            self.seqnum += len(data2add)
-            response = self.create_msg_w_seqnum(ack=1).encode()
-            self.socket.sendto(response, self.dest_addr)
+            else :
+                data += data2add
+                logging.info(data)
+                i += 1
+                self.mesg_recv_so_far -= len(data2add)
+                self.seqnum += len(data2add)
+                response = self.create_msg_w_seqnum(ack=1).encode()
+                self.socket.sendto(response, self.dest_addr)
 
         if len(data) > original_buffsize:
             self.cache = data[original_buffsize:]
             data = data[:original_buffsize]
         logging.info(f"mensaje con buffsize {original_buffsize} = {data}")
-        logging.info("-----------------------")
+        logging.info("-----------------------\n")
         return data.encode()
 
     def close(self):
