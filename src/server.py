@@ -1,11 +1,11 @@
 import socketTCP
-from utilsUDP import SV_ADDR
-from utils import contains_end_of_message, remove_end_of_message, receive_full_mesage
+import sys
+from utils import receive_full_mesage
 buffsize = 12
-
+address = (sys.argv[1], int(sys.argv[2])) 
 # server
 server_socketTCP = socketTCP.SocketTCP()
-server_socketTCP.bind(SV_ADDR)
+server_socketTCP.bind(address)
 
 print("Esperando conexion...")
 connection_socketTCP, new_address = server_socketTCP.accept()

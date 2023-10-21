@@ -30,4 +30,8 @@ Para el diagrama 7 se tomo la desicion de:
 
 __Si se pierde el ultimo ACK, podemos arreglarlo si permitimos que el mensaje de datos que nos llegue en el futuro, sea el mensaje que permita hacer ACK de que si estamos comunicados.__
 
-Esto lo podemos ver al final del diagrama de la seccion 7, al receptor le llega un mensaje con datos y como toma ese como un ACK, sale de la funcion de `accept` y entra a la funcion para `recibir`
+Esto lo podemos ver al final del diagrama de la seccion 7, al receptor le llega un mensaje con datos y como toma ese como un ACK, sale de la funcion de `accept` y entra a la funcion para `recibir` y de ahí recibe el largo.
+
+### Decisiones de diseño Seccion 5
+
+Para la clase socket tcp, se decidio usar los headers recomendados y se decidio que todos los buffers de los sockets UDP, independiente si tiene datos o no, vengan con el largo de los headers + el buffer de datos, el porque, es po lo dicho anteriormente con lo de la seccion 7.
