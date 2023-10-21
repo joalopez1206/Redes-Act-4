@@ -1,5 +1,3 @@
-import time
-
 from socketTCP import SocketTCP
 from utilsUDP import SV_ADDR
 # CLIENT
