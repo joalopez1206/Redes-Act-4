@@ -111,7 +111,7 @@ class SocketTCP:
         new_address = ('localhost', 8003)
 
         # Y asociamos la direccion de origen y destino al nuevo socket
-        new_sock.origen_addr = new_address
+        new_sock.origen_addr = new_sock.socket.getsockname()
         new_sock.dest_addr = dest_addr
 
         # Enviamos ahora el syn+ack
@@ -263,6 +263,7 @@ class SocketTCP:
                 self.seqnum += len(data2add)
                 response = self.create_msg_w_seqnum(ack=1).encode()
                 self.socket.sendto(response, self.dest_addr)
+                if(self.mesg_recv_so_far == 0): break
 
         if len(data) > original_buffsize:
             self.cache = data[original_buffsize:]
@@ -310,7 +311,7 @@ class SocketTCP:
     def recv_close(self):
         logging.info("-----------------------")
         logging.info("Starting recv close ")
-
+        self.socket.setblocking(True)
         end_of_comm_msg, _ = self.socket.recvfrom(TOTAL_LEN)
         parsed_msg = SocketTCP.parse_segment(end_of_comm_msg.decode())
         logging.info("recv")
