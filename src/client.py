@@ -6,7 +6,7 @@ if len(sys.argv) != 3:
     print("Ussage python3 client.py <ip> <port>")
 
 address = (sys.argv[1], int(sys.argv[2]))
-s = input("Enter a message") 
+s = input("Enter a message: ") 
 s_send = s + "\n"
 # client
 client_socketTCP = socketTCP.SocketTCP()

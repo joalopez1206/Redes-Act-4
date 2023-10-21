@@ -9,8 +9,8 @@ LEN_SYN = 10
 LEN_HEADERS = 1 + 3 + 1 + 3 + 1 + 3 + 10 + 3  # numero magico
 
 TOTAL_LEN = LEN_HEADERS + BUFFER_SIZE
-logging.basicConfig(format="%(levelname)s -> %(message)s", level=logging.INFO)
-
+#logging.basicConfig(format="%(levelname)s -> %(message)s", level=logging.INFO)
+logging.basicConfig(format="%(levelname)s -> %(message)s", level=logging.WARN)
 
 class SocketTCP:
     def __init__(self):
